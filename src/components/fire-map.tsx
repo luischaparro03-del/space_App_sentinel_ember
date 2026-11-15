@@ -1,0 +1,11 @@
+import { useEffect, useRef, useState } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+type Fire = { latitude: number; longitude: number; frp: number | null; confidence: string; observedAt: string; source: string };
+const color = (value: string) => value === "high" ? "#cf3d25" : value === "low" ? "#e8b53e" : "#ec762e";
+export function FireMap({ source }: { source: string }) {
+  const element = useRef<HTMLDivElement>(null), map = useRef<L.Map | null>(null), layer = useRef<L.LayerGroup | null>(null); const [status, setStatus] = useState("Cargando datos satelitales…");
+  useEffect(() => { if (!element.current || map.current) return; map.current = L.map(element.current).setView([4.5, -74.3], 6); L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors" }).addTo(map.current); layer.current = L.layerGroup().addTo(map.current); return () => { map.current?.remove(); map.current = null; }; }, []);
+  useEffect(() => { if (!layer.current) return; const controller = new AbortController(); setStatus("Consultando NASA FIRMS…"); fetch(`/api/fires?days=1&source=${encodeURIComponent(source)}`, { signal: controller.signal }).then(async response => ({ ok: response.ok, body: await response.json() })).then(({ ok, body }) => { if (!ok) throw new Error(body.error); layer.current?.clearLayers(); (body.data as Fire[]).forEach(fire => L.circleMarker([fire.latitude, fire.longitude], { radius: Math.max(4, Math.min(18, Math.sqrt(fire.frp ?? 1) * 1.8)), color: "#fff", weight: 1, fillColor: color(fire.confidence), fillOpacity: .86 }).bindTooltip(`<b>${new Date(fire.observedAt).toLocaleString("es-CO", { timeZone: "UTC" })} UTC</b><br/>FRP: ${fire.frp ?? "N/D"} MW<br/>Confianza: ${fire.confidence}`).addTo(layer.current!)); setStatus(body.data.length ? `${body.meta.count} detecciones · ${body.meta.source}` : "Sin detecciones en el período seleccionado"); }).catch((error: Error) => { if (error.name !== "AbortError") setStatus(error.message || "No se pudieron cargar los incendios"); }); return () => controller.abort(); }, [source]);
+  return <div className="live-map"><div ref={element} className="leaflet-map" /><p className="map-status">{status}</p></div>;
+}
