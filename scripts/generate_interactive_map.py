@@ -119,8 +119,8 @@ def extraer_firms_seguro(source, start, end):
 print("\n3. Descargando datos de incendios...")
 
 # Rango predeterminado del mapa operativo; los históricos llegan por argumentos.
-FECHA_INI_HIST = FECHA_INI_ARGUMENTO or date(2024, 1, 1)
-FECHA_FIN_HIST = FECHA_FIN_ARGUMENTO or date(2024, 1, 31)
+FECHA_INI_HIST = FECHA_INI_ARGUMENTO or date(2025, 1, 1)
+FECHA_FIN_HIST = FECHA_FIN_ARGUMENTO or date(2026, 1, 31)
 
 # 4.1 Datos históricos procesados (Standard Processing)
 mod_sp = extraer_firms_seguro("MODIS_SP", FECHA_INI_HIST, FECHA_FIN_HIST)
