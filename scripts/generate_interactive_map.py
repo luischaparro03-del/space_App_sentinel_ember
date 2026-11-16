@@ -1,41 +1,14 @@
-import os, io, requests, zipfile, time, argparse
+import os, io, requests, zipfile, time
 import pandas as pd
 import numpy as np
 import geopandas as gpd
 from datetime import date, timedelta
 
-parser = argparse.ArgumentParser(description="Genera un mapa Sentinel Ember armonizado.")
-parser.add_argument("--start", help="Inicio histórico AAAA-MM-DD")
-parser.add_argument("--end", help="Fin histórico AAAA-MM-DD")
-parser.add_argument("--name", default="operativo", help="Nombre seguro del conjunto de salida")
-parser.add_argument("--historical-only", action="store_true", help="No mezcla NRT en un mapa histórico")
-parser.add_argument("--no-browser", action="store_true", help="No abre Plotly al terminar")
-args = parser.parse_args()
-
-def parse_date(value):
-    return date.fromisoformat(value) if value else None
-
-FECHA_INI_ARGUMENTO = parse_date(args.start)
-FECHA_FIN_ARGUMENTO = parse_date(args.end)
-if bool(FECHA_INI_ARGUMENTO) != bool(FECHA_FIN_ARGUMENTO):
-    raise ValueError("--start y --end deben usarse juntos.")
-NOMBRE_SALIDA = "".join(c for c in args.name if c.isalnum() or c in ("-", "_")) or "operativo"
-
 # --- 1. CONFIGURACIÓN Y VERIFICACIÓN DE LA API ---
 BASE = "./sentinel_data"
 os.makedirs(BASE, exist_ok=True)
 
-ENV_FILE = os.path.join(os.path.dirname(__file__), "..", ".env.local")
-if os.path.exists(ENV_FILE):
-    with open(ENV_FILE, "r", encoding="utf-8") as env_file:
-        for line in env_file:
-            key, separator, value = line.strip().partition("=")
-            if separator and key and not key.startswith("#"):
-                os.environ.setdefault(key, value)
-
-MAP_KEY = os.environ.get("FIRMS_MAP_KEY", "")
-if not MAP_KEY:
-    raise RuntimeError("FIRMS_MAP_KEY debe existir en .env.local; no se admiten claves dentro del código.")
+MAP_KEY = "167ddb15fa8f6253932f51acd348aeac"
 BBOX = "-82,-4.3,-66.8,16.0"
 API = "https://firms.modaps.eosdis.nasa.gov/api"
 
@@ -118,22 +91,19 @@ def extraer_firms_seguro(source, start, end):
 # --- 4. DESCARGA HISTÓRICA (_SP) + TIEMPO CASI REAL (_NRT) ---
 print("\n3. Descargando datos de incendios...")
 
-# Rango predeterminado del mapa operativo; los históricos llegan por argumentos.
-FECHA_INI_HIST = FECHA_INI_ARGUMENTO or date(2025, 1, 1)
-FECHA_FIN_HIST = FECHA_FIN_ARGUMENTO or date(2026, 1, 31)
+# Rango deseado (puedes ampliarlo a todo el año, ej. date(2024, 1, 1) a date(2024, 12, 31))
+FECHA_INI_HIST = date(2025, 1, 1)
+FECHA_FIN_HIST = date(2026, 1, 31)
 
 # 4.1 Datos históricos procesados (Standard Processing)
 mod_sp = extraer_firms_seguro("MODIS_SP", FECHA_INI_HIST, FECHA_FIN_HIST)
 vii_sp = extraer_firms_seguro("VIIRS_SNPP_SP", FECHA_INI_HIST, FECHA_FIN_HIST)
 
 # 4.2 Datos en vivo (Near Real-Time) de los últimos 7 días para el Sistema de Alertas
-if args.historical_only:
-    mod_nrt, vii_nrt = pd.DataFrame(), pd.DataFrame()
-else:
-    hoy = date.today()
-    hace_7d = hoy - timedelta(days=7)
-    mod_nrt = extraer_firms_seguro("MODIS_NRT", hace_7d, hoy)
-    vii_nrt = extraer_firms_seguro("VIIRS_SNPP_NRT", hace_7d, hoy)
+hoy = date.today()
+hace_7d = hoy - timedelta(days=7)
+mod_nrt = extraer_firms_seguro("MODIS_NRT", hace_7d, hoy)
+vii_nrt = extraer_firms_seguro("VIIRS_SNPP_NRT", hace_7d, hoy)
 
 # Unir todo lo recolectado
 mod = pd.concat([mod_sp, mod_nrt], ignore_index=True)
@@ -293,12 +263,12 @@ if not df_total.empty:
         np.where(eventos_armonizados["confianza_max"] >= 65, "Moderada (Foco Incipiente)", "Vigilancia")
     )
 
-    ruta_parquet = f"{BASE}/{NOMBRE_SALIDA}_armonizados.parquet"
+    ruta_parquet = f"{BASE}/colombia_fuegos_armonizados.parquet"
     eventos_armonizados.to_parquet(ruta_parquet, index=False)
     # Guardar puntos crudos recortados a Colombia para comparar en el mapa
     # Guardar solo las columnas necesarias y tipadas para comparar en el mapa
     cols_crudos = ["latitude", "longitude", "frp", "confidence", "acq_date", "scan", "track", "sensor", "departamento"]
-    gdf_col[cols_crudos].to_parquet(f"{BASE}/{NOMBRE_SALIDA}_crudos.parquet", index=False)
+    gdf_col[cols_crudos].to_parquet(f"{BASE}/colombia_fuegos_crudos.parquet", index=False)
     print(f"   De {len(gdf_col):,} detecciones crudas -> {len(eventos_armonizados):,} puntos ponderados únicos.")
     print(f"   Eventos con fusión directa MODIS+VIIRS: {(eventos_armonizados['sensores_activos'] == 'MODIS+VIIRS').sum():,}")
 
@@ -307,8 +277,8 @@ if not df_total.empty:
 import json
 import plotly.express as px
 
-ruta_parquet = f"{BASE}/{NOMBRE_SALIDA}_armonizados.parquet"
-ruta_crudos = f"{BASE}/{NOMBRE_SALIDA}_crudos.parquet"
+ruta_parquet = f"{BASE}/colombia_fuegos_armonizados.parquet"
+ruta_crudos = f"{BASE}/colombia_fuegos_crudos.parquet"
 ruta_deptos = f"{BASE}/gadm41_COL_1.json"
 
 if os.path.exists(ruta_parquet):
@@ -333,21 +303,24 @@ if os.path.exists(ruta_parquet):
         df_modis = eventos_armonizados[eventos_armonizados["pixeles_MODIS"] > 0].copy()
         cols_hover_ind = {"acq_date": True, "frp_combinado_mw": ":.1f", "pixeles_VIIRS": True, "pixeles_MODIS": True, "tamano_punto": False}
 
-    # 3. English presentation fields; the underlying harmonization is unchanged.
-    alert_labels = {
-        "Crítica (Validada)": "Critical (cross-validated)",
-        "Moderada (Foco Incipiente)": "Moderate (emerging hotspot)",
-        "Vigilancia": "Monitoring"
+    # 3. Construir figura base con la vista COMBINADA (Armonizada)
+    mapa_alertas_en = {
+        "Crítica (Validada)": "Critical (Cross-Validated)",
+        "Moderada (Foco Incipiente)": "Moderate (Incipient Focus)",
+        "Vigilancia": "Watch (Low Confidence)"
     }
-    eventos_armonizados["alert_level"] = eventos_armonizados["nivel_alerta"].map(alert_labels).fillna(eventos_armonizados["nivel_alerta"])
-    eventos_armonizados["harmony_type"] = (
-        eventos_armonizados["tipo_armonia"]
-        .str.replace("Fusión Inter-Sensor", "Inter-sensor fusion", regex=False)
-        .str.replace("Clúster Multi-Píxel Ponderado", "Weighted multi-pixel cluster", regex=False)
-        .str.replace("Foco Puntual", "Single-pixel hotspot", regex=False)
+    eventos_armonizados["alert_level"] = (
+        eventos_armonizados["nivel_alerta"].map(mapa_alertas_en).fillna(eventos_armonizados["nivel_alerta"])
     )
 
-    # 3. Build the harmonized layer.
+    eventos_armonizados["harmony_type"] = (
+        eventos_armonizados["tipo_armonia"]
+        .str.replace("Fusión Inter-Sensor", "Inter-Sensor Fusion", regex=False)
+        .str.replace("Clúster Multi-Píxel Ponderado", "Weighted Multi-Pixel Cluster", regex=False)
+        .str.replace("Foco Puntual", "Single-Pixel Focus", regex=False)
+    )
+
+    # Construir figura base con la vista COMBINADA (Harmonized)
     fig = px.scatter_map(
         eventos_armonizados,
         lat="latitude",
@@ -357,31 +330,46 @@ if os.path.exists(ruta_parquet):
         size_max=17,
         opacity=0.85,
         color_discrete_map={
-            "Critical (cross-validated)": "#ff3b30",
-            "Moderate (emerging hotspot)": "#ff9500",
-            "Monitoring": "#ffcc00"
+            "Critical (Cross-Validated)": "#ff3b30",
+            "Moderate (Incipient Focus)": "#ff9500",
+            "Watch (Low Confidence)": "#ffcc00"
         },
         category_orders={
-            "alert_level": ["Critical (cross-validated)", "Moderate (emerging hotspot)", "Monitoring"]
+            "alert_level": [
+                "Critical (Cross-Validated)",
+                "Moderate (Incipient Focus)",
+                "Watch (Low Confidence)"
+            ]
         },
-        custom_data=["departamento", "alert_level", "acq_date", "harmony_type", "n_pixeles_totales", "pixeles_VIIRS", "pixeles_MODIS", "frp_combinado_mw", "intensidad_mw_km2", "area_evaluada_km2", "radio_incertidumbre_m", "latitude", "longitude"],
+        custom_data=[
+            "departamento", "alert_level", "acq_date", "harmony_type",
+            "n_pixeles_totales", "pixeles_VIIRS", "pixeles_MODIS",
+            "frp_combinado_mw", "intensidad_mw_km2", "area_evaluada_km2",
+            "radio_incertidumbre_m", "latitude", "longitude"
+        ],
         zoom=5.0,
         center={"lat": 4.5709, "lon": -74.2973},
         map_style="carto-darkmatter"
     )
-    fig.update_traces(hovertemplate=(
-        "<b>📍 %{customdata[0]} Department</b><br>"
-        "<b>Alert level:</b> %{customdata[1]}<br>"
-        "<b>Date:</b> %{customdata[2]} | <b>Coords:</b> %{customdata[11]:.4f}, %{customdata[12]:.4f}<br>"
-        "<b>Method:</b> %{customdata[3]}<br>"
-        "<b>Merged pixels:</b> %{customdata[4]} (VIIRS: %{customdata[5]} | MODIS: %{customdata[6]})<br>"
-        "<b>Combined FRP:</b> %{customdata[7]:.1f} MW<br>"
-        "<b>Radiative intensity:</b> %{customdata[8]:.1f} MW/km²<br>"
-        "<b>Evaluated footprint:</b> %{customdata[9]:.2f} km² (±%{customdata[10]:.0f} m)<extra></extra>"
-    ))
+
+    # Tarjeta emergente (Tooltip) limpia en inglés para la capa armonizada
+    fig.update_traces(
+        hovertemplate=(
+            "<b>📍 %{customdata[0]} Department</b><br>"
+            "<b>Alert Level:</b> %{customdata[1]}<br>"
+            "<b>Date:</b> %{customdata[2]} | <b>Coords:</b> %{customdata[11]:.4f}, %{customdata[12]:.4f}<br>"
+            "<b>Method:</b> %{customdata[3]}<br>"
+            "<b>Merged Pixels:</b> %{customdata[4]} (VIIRS: %{customdata[5]} | MODIS: %{customdata[6]})<br>"
+            "<b>Combined FRP:</b> %{customdata[7]:.1f} MW<br>"
+            "<b>Radiative Intensity:</b> %{customdata[8]:.1f} MW/km²<br>"
+            "<b>Evaluated Footprint:</b> %{customdata[9]:.2f} km² (±%{customdata[10]:.0f} m)"
+            "<extra></extra>"
+        )
+    )
     n_comb = len(fig.data)
 
     # 4. Crear capa SOLO VIIRS (375 m) y agregarla oculta por defecto
+    col_frp_ind = "frp" if "frp" in df_viirs.columns else "frp_combinado_mw"
     fig_viirs = px.scatter_map(
         df_viirs,
         lat="latitude",
@@ -390,13 +378,20 @@ if os.path.exists(ruta_parquet):
         size_max=13,
         opacity=0.82,
         color_discrete_sequence=["#00e5ff"],
-        custom_data=["departamento", "acq_date", "frp", "latitude", "longitude"]
+        custom_data=["departamento", "acq_date", col_frp_ind, "latitude", "longitude"]
     )
     for trace in fig_viirs.data:
-        trace.name = f"VIIRS 375m only ({len(df_viirs):,})"
+        trace.name = f"VIIRS 375m Only ({len(df_viirs):,})"
         trace.showlegend = True
         trace.visible = False
-        trace.hovertemplate = "<b>📍 %{customdata[0]} Department</b><br><b>Sensor:</b> VIIRS (375 m)<br><b>Date:</b> %{customdata[1]}<br><b>Radiative power:</b> %{customdata[2]:.1f} MW<br><b>Coords:</b> %{customdata[3]:.4f}, %{customdata[4]:.4f}<extra></extra>"
+        trace.hovertemplate = (
+            "<b>📍 %{customdata[0]} Department</b><br>"
+            "<b>Sensor:</b> VIIRS (375 m Nadir Resolution)<br>"
+            "<b>Date:</b> %{customdata[1]}<br>"
+            "<b>Radiative Power (FRP):</b> %{customdata[2]:.1f} MW<br>"
+            "<b>Coords:</b> %{customdata[3]:.4f}, %{customdata[4]:.4f}"
+            "<extra></extra>"
+        )
         fig.add_trace(trace)
     n_viirs = len(fig_viirs.data)
 
@@ -409,27 +404,57 @@ if os.path.exists(ruta_parquet):
         size_max=15,
         opacity=0.82,
         color_discrete_sequence=["#ff2a85"],
-        custom_data=["departamento", "acq_date", "frp", "latitude", "longitude"]
+        custom_data=["departamento", "acq_date", col_frp_ind, "latitude", "longitude"]
     )
     for trace in fig_modis.data:
-        trace.name = f"MODIS 1km only ({len(df_modis):,})"
+        trace.name = f"MODIS 1km Only ({len(df_modis):,})"
         trace.showlegend = True
         trace.visible = False
-        trace.hovertemplate = "<b>📍 %{customdata[0]} Department</b><br><b>Sensor:</b> MODIS (1 km)<br><b>Date:</b> %{customdata[1]}<br><b>Radiative power:</b> %{customdata[2]:.1f} MW<br><b>Coords:</b> %{customdata[3]:.4f}, %{customdata[4]:.4f}<extra></extra>"
+        trace.hovertemplate = (
+            "<b>📍 %{customdata[0]} Department</b><br>"
+            "<b>Sensor:</b> MODIS (1 km Nadir Resolution)<br>"
+            "<b>Date:</b> %{customdata[1]}<br>"
+            "<b>Radiative Power (FRP):</b> %{customdata[2]:.1f} MW<br>"
+            "<b>Coords:</b> %{customdata[3]:.4f}, %{customdata[4]:.4f}"
+            "<extra></extra>"
+        )
         fig.add_trace(trace)
     n_modis = len(fig_modis.data)
 
-    # 6. Configurar máscaras de visibilidad para los 3 botones interactivos
+    # 6. Configurar máscaras de visibilidad y diseño visual oscuro (Dark UI)
     vis_comb  = [True] * n_comb  + [False] * n_viirs + [False] * n_modis
     vis_viirs = [False] * n_comb + [True] * n_viirs  + [False] * n_modis
     vis_modis = [False] * n_comb + [False] * n_viirs + [True] * n_modis
 
     fig.update_layout(
-        title={"text": "<b>SENTINEL EMBER</b> | Physics-based harmonized wildfire monitoring (MODIS + VIIRS)", "x": 0.015, "y": 0.975, "xanchor": "left", "yanchor": "top", "font": {"color": "#f0f4f8", "size": 17}},
-        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-        font={"family": "Verdana, Geneva, sans-serif", "color": "#e6edf3"},
-        hoverlabel={"bgcolor": "rgba(15, 20, 28, 0.94)", "bordercolor": "#30363d", "font": {"color": "#f0f6fc", "size": 12}},
-        legend={"title": {"text": "<b>Active layer / severity</b>"}, "x": 0.985, "y": 0.91, "xanchor": "right", "yanchor": "top", "bgcolor": "rgba(13, 17, 23, 0.88)", "bordercolor": "#30363d", "borderwidth": 1, "font": {"size": 12, "color": "#e6edf3"}},
+        title={
+            "text": "<b>SENTINEL EMBER</b>  |  Physics-Based Harmonized Wildfire Monitoring (MODIS + VIIRS)",
+            "x": 0.015,
+            "y": 0.975,
+            "xanchor": "left",
+            "yanchor": "top",
+            "font": {"color": "#f0f4f8", "size": 17, "family": "Segoe UI, Roboto, Helvetica, sans-serif"}
+        },
+        paper_bgcolor="#0d1117",
+        plot_bgcolor="#0d1117",
+        font={"family": "Segoe UI, Roboto, Helvetica, sans-serif", "color": "#e6edf3"},
+        hoverlabel={
+            "bgcolor": "rgba(15, 20, 28, 0.94)",
+            "bordercolor": "#30363d",
+            "font": {"color": "#f0f6fc", "size": 12.5, "family": "Segoe UI, Roboto, sans-serif"}
+        },
+        legend={
+            "title": {"text": "<b>Active Layer / Severity</b>", "font": {"size": 12, "color": "#8b949e"}},
+            "x": 0.985,
+            "y": 0.91,
+            "xanchor": "right",
+            "yanchor": "top",
+            "bgcolor": "rgba(13, 17, 23, 0.88)",
+            "bordercolor": "#30363d",
+            "borderwidth": 1,
+            "font": {"size": 12, "color": "#e6edf3"},
+            "itemsizing": "constant"
+        },
         updatemenus=[{
             "type": "buttons",
             "direction": "right",
@@ -438,31 +463,34 @@ if os.path.exists(ruta_parquet):
             "y": 0.91,
             "xanchor": "left",
             "yanchor": "top",
-            "bgcolor": "#161b22", "bordercolor": "#30363d", "borderwidth": 1,
-            "pad": {"r": 8, "t": 6, "b": 6, "l": 8}, "font": {"color": "#58a6ff", "size": 12},
+            "bgcolor": "#161b22",
+            "bordercolor": "#30363d",
+            "borderwidth": 1,
+            "pad": {"r": 8, "t": 6, "b": 6, "l": 8},
+            "font": {"color": "#58a6ff", "size": 12},
             "buttons": [
                 {
-                    "label": f"🔥 Harmonized fusion ({len(eventos_armonizados):,})",
+                    "label": f"🔥 Harmonized Fusion ({len(eventos_armonizados):,})",
                     "method": "update",
                     "args": [
                         {"visible": vis_comb},
-                        {"title.text": "<b>SENTINEL EMBER</b> | Physics-based harmonized wildfire monitoring (MODIS + VIIRS)"}
+                        {"title.text": "<b>SENTINEL EMBER</b>  |  Physics-Based Harmonized Wildfire Monitoring (MODIS + VIIRS)"}
                     ]
                 },
                 {
-                    "label": f"🛰️ VIIRS 375m only ({len(df_viirs):,})",
+                    "label": f"🛰️ VIIRS 375m Only ({len(df_viirs):,})",
                     "method": "update",
                     "args": [
                         {"visible": vis_viirs},
-                        {"title.text": "<b>SENTINEL EMBER</b> | Raw VIIRS sensor detections (375 m nadir resolution)"}
+                        {"title.text": "<b>SENTINEL EMBER</b>  |  Raw VIIRS Sensor Detections (375 m Nadir Resolution)"}
                     ]
                 },
                 {
-                    "label": f"🛰️ MODIS 1km only ({len(df_modis):,})",
+                    "label": f"🛰️ MODIS 1km Only ({len(df_modis):,})",
                     "method": "update",
                     "args": [
                         {"visible": vis_modis},
-                        {"title.text": "<b>SENTINEL EMBER</b> | Raw MODIS sensor detections (1 km nadir resolution)"}
+                        {"title.text": "<b>SENTINEL EMBER</b>  |  Raw MODIS Sensor Detections (1 km Nadir Resolution)"}
                     ]
                 }
             ]
@@ -484,10 +512,9 @@ if os.path.exists(ruta_parquet):
             }]
         )
 
-    ruta_html = f"{BASE}/mapa_{NOMBRE_SALIDA}.html"
+    ruta_html = f"{BASE}/mapa_interactivo_colombia.html"
     fig.write_html(ruta_html)
     print(f"Mapa interactivo con selector guardado en: {ruta_html}")
-    if not args.no_browser:
-        fig.show()
+    fig.show()
 else:
     print("No existe el archivo parquet para graficar.")
