@@ -333,42 +333,52 @@ if os.path.exists(ruta_parquet):
         df_modis = eventos_armonizados[eventos_armonizados["pixeles_MODIS"] > 0].copy()
         cols_hover_ind = {"acq_date": True, "frp_combinado_mw": ":.1f", "pixeles_VIIRS": True, "pixeles_MODIS": True, "tamano_punto": False}
 
-    # 3. Construir figura base con la vista COMBINADA (Armonizada)
+    # 3. English presentation fields; the underlying harmonization is unchanged.
+    alert_labels = {
+        "Crítica (Validada)": "Critical (cross-validated)",
+        "Moderada (Foco Incipiente)": "Moderate (emerging hotspot)",
+        "Vigilancia": "Monitoring"
+    }
+    eventos_armonizados["alert_level"] = eventos_armonizados["nivel_alerta"].map(alert_labels).fillna(eventos_armonizados["nivel_alerta"])
+    eventos_armonizados["harmony_type"] = (
+        eventos_armonizados["tipo_armonia"]
+        .str.replace("Fusión Inter-Sensor", "Inter-sensor fusion", regex=False)
+        .str.replace("Clúster Multi-Píxel Ponderado", "Weighted multi-pixel cluster", regex=False)
+        .str.replace("Foco Puntual", "Single-pixel hotspot", regex=False)
+    )
+
+    # 3. Build the harmonized layer.
     fig = px.scatter_map(
         eventos_armonizados,
         lat="latitude",
         lon="longitude",
-        color="nivel_alerta",
+        color="alert_level",
         size="tamano_punto",
-        size_max=16,
+        size_max=17,
+        opacity=0.85,
         color_discrete_map={
-            "Crítica (Validada)": "#ff2b2b",
-            "Moderada (Foco Incipiente)": "#ff9f1c",
-            "Vigilancia": "#ffea00"
+            "Critical (cross-validated)": "#ff3b30",
+            "Moderate (emerging hotspot)": "#ff9500",
+            "Monitoring": "#ffcc00"
         },
         category_orders={
-            "nivel_alerta": ["Crítica (Validada)", "Moderada (Foco Incipiente)", "Vigilancia"]
+            "alert_level": ["Critical (cross-validated)", "Moderate (emerging hotspot)", "Monitoring"]
         },
-        hover_name="departamento",
-        hover_data={
-            "acq_date": True,
-            "tipo_armonia": True,
-            "n_pixeles_totales": True,
-            "pixeles_VIIRS": True,
-            "pixeles_MODIS": True,
-            "frp_combinado_mw": ":.1f",
-            "intensidad_mw_km2": ":.1f",
-            "area_evaluada_km2": ":.2f",
-            "radio_incertidumbre_m": ":.0f",
-            "tamano_punto": False,
-            "latitude": ":.4f",
-            "longitude": ":.4f"
-        },
-        zoom=4.8,
+        custom_data=["departamento", "alert_level", "acq_date", "harmony_type", "n_pixeles_totales", "pixeles_VIIRS", "pixeles_MODIS", "frp_combinado_mw", "intensidad_mw_km2", "area_evaluada_km2", "radio_incertidumbre_m", "latitude", "longitude"],
+        zoom=5.0,
         center={"lat": 4.5709, "lon": -74.2973},
-        map_style="carto-darkmatter",
-        title="Sentinel Ember: Focos Armonizados por Huella Física (MODIS + VIIRS)"
+        map_style="carto-darkmatter"
     )
+    fig.update_traces(hovertemplate=(
+        "<b>📍 %{customdata[0]} Department</b><br>"
+        "<b>Alert level:</b> %{customdata[1]}<br>"
+        "<b>Date:</b> %{customdata[2]} | <b>Coords:</b> %{customdata[11]:.4f}, %{customdata[12]:.4f}<br>"
+        "<b>Method:</b> %{customdata[3]}<br>"
+        "<b>Merged pixels:</b> %{customdata[4]} (VIIRS: %{customdata[5]} | MODIS: %{customdata[6]})<br>"
+        "<b>Combined FRP:</b> %{customdata[7]:.1f} MW<br>"
+        "<b>Radiative intensity:</b> %{customdata[8]:.1f} MW/km²<br>"
+        "<b>Evaluated footprint:</b> %{customdata[9]:.2f} km² (±%{customdata[10]:.0f} m)<extra></extra>"
+    ))
     n_comb = len(fig.data)
 
     # 4. Crear capa SOLO VIIRS (375 m) y agregarla oculta por defecto
@@ -378,14 +388,15 @@ if os.path.exists(ruta_parquet):
         lon="longitude",
         size="tamano_punto",
         size_max=13,
-        color_discrete_sequence=["#00e5ff"], # Cian brillante para distinguir VIIRS
-        hover_name="departamento",
-        hover_data=cols_hover_ind
+        opacity=0.82,
+        color_discrete_sequence=["#00e5ff"],
+        custom_data=["departamento", "acq_date", "frp", "latitude", "longitude"]
     )
     for trace in fig_viirs.data:
-        trace.name = f"Solo VIIRS ({len(df_viirs):,})"
+        trace.name = f"VIIRS 375m only ({len(df_viirs):,})"
         trace.showlegend = True
         trace.visible = False
+        trace.hovertemplate = "<b>📍 %{customdata[0]} Department</b><br><b>Sensor:</b> VIIRS (375 m)<br><b>Date:</b> %{customdata[1]}<br><b>Radiative power:</b> %{customdata[2]:.1f} MW<br><b>Coords:</b> %{customdata[3]:.4f}, %{customdata[4]:.4f}<extra></extra>"
         fig.add_trace(trace)
     n_viirs = len(fig_viirs.data)
 
@@ -396,14 +407,15 @@ if os.path.exists(ruta_parquet):
         lon="longitude",
         size="tamano_punto",
         size_max=15,
-        color_discrete_sequence=["#ff007f"], # Magenta para distinguir MODIS
-        hover_name="departamento",
-        hover_data=cols_hover_ind
+        opacity=0.82,
+        color_discrete_sequence=["#ff2a85"],
+        custom_data=["departamento", "acq_date", "frp", "latitude", "longitude"]
     )
     for trace in fig_modis.data:
-        trace.name = f"Solo MODIS ({len(df_modis):,})"
+        trace.name = f"MODIS 1km only ({len(df_modis):,})"
         trace.showlegend = True
         trace.visible = False
+        trace.hovertemplate = "<b>📍 %{customdata[0]} Department</b><br><b>Sensor:</b> MODIS (1 km)<br><b>Date:</b> %{customdata[1]}<br><b>Radiative power:</b> %{customdata[2]:.1f} MW<br><b>Coords:</b> %{customdata[3]:.4f}, %{customdata[4]:.4f}<extra></extra>"
         fig.add_trace(trace)
     n_modis = len(fig_modis.data)
 
@@ -413,46 +425,49 @@ if os.path.exists(ruta_parquet):
     vis_modis = [False] * n_comb + [False] * n_viirs + [True] * n_modis
 
     fig.update_layout(
+        title={"text": "<b>SENTINEL EMBER</b> | Physics-based harmonized wildfire monitoring (MODIS + VIIRS)", "x": 0.015, "y": 0.975, "xanchor": "left", "yanchor": "top", "font": {"color": "#f0f4f8", "size": 17}},
+        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+        font={"family": "Verdana, Geneva, sans-serif", "color": "#e6edf3"},
+        hoverlabel={"bgcolor": "rgba(15, 20, 28, 0.94)", "bordercolor": "#30363d", "font": {"color": "#f0f6fc", "size": 12}},
+        legend={"title": {"text": "<b>Active layer / severity</b>"}, "x": 0.985, "y": 0.91, "xanchor": "right", "yanchor": "top", "bgcolor": "rgba(13, 17, 23, 0.88)", "bordercolor": "#30363d", "borderwidth": 1, "font": {"size": 12, "color": "#e6edf3"}},
         updatemenus=[{
             "type": "buttons",
             "direction": "right",
             "active": 0,
-            "x": 0.01,
-            "y": 0.98,
+            "x": 0.015,
+            "y": 0.91,
             "xanchor": "left",
             "yanchor": "top",
-            "bgcolor": "rgba(25, 25, 35, 0.9)",
-            "bordercolor": "#666666",
-            "font": {"color": "#ffffff", "size": 12},
+            "bgcolor": "#161b22", "bordercolor": "#30363d", "borderwidth": 1,
+            "pad": {"r": 8, "t": 6, "b": 6, "l": 8}, "font": {"color": "#58a6ff", "size": 12},
             "buttons": [
                 {
-                    "label": f"Combinada Armonizada ({len(eventos_armonizados):,})",
+                    "label": f"🔥 Harmonized fusion ({len(eventos_armonizados):,})",
                     "method": "update",
                     "args": [
                         {"visible": vis_comb},
-                        {"title": "Sentinel Ember: Vista Armonizada por Huella Física (MODIS + VIIRS)"}
+                        {"title.text": "<b>SENTINEL EMBER</b> | Physics-based harmonized wildfire monitoring (MODIS + VIIRS)"}
                     ]
                 },
                 {
-                    "label": f"Solo VIIRS 375m ({len(df_viirs):,})",
+                    "label": f"🛰️ VIIRS 375m only ({len(df_viirs):,})",
                     "method": "update",
                     "args": [
                         {"visible": vis_viirs},
-                        {"title": "Sentinel Ember: Detecciones Sensor VIIRS (Resolución Nadir 375 m)"}
+                        {"title.text": "<b>SENTINEL EMBER</b> | Raw VIIRS sensor detections (375 m nadir resolution)"}
                     ]
                 },
                 {
-                    "label": f"Solo MODIS 1km ({len(df_modis):,})",
+                    "label": f"🛰️ MODIS 1km only ({len(df_modis):,})",
                     "method": "update",
                     "args": [
                         {"visible": vis_modis},
-                        {"title": "Sentinel Ember: Detecciones Sensor MODIS (Resolución Nadir 1 km)"}
+                        {"title.text": "<b>SENTINEL EMBER</b> | Raw MODIS sensor detections (1 km nadir resolution)"}
                     ]
                 }
             ]
         }],
-        margin={"r": 0, "t": 45, "l": 0, "b": 0},
-        legend_title_text="Capa Activa"
+        margin={"r": 0, "t": 52, "l": 0, "b": 0}
     )
 
     # 7. Superponer límites departamentales de Colombia

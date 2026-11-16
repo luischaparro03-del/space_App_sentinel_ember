@@ -29,10 +29,11 @@ body,button,select,.workspace h1,.map-status{font-family:Verdana,Geneva,sans-ser
 .sidebar nav .history-trigger b{display:grid;place-items:center;width:30px;height:30px;min-width:30px;overflow:hidden}
 .sidebar nav .history-trigger b img{display:block;width:23px;height:23px;object-fit:contain;filter:invert(1)}
 .sidebar nav .history-trigger i{margin-left:auto;color:#fc3d21;font-style:normal;font-size:18px}
-.history-years{display:flex;gap:8px;padding:2px 6px 9px 48px}
-.history-years button{border:1px solid #4b4e55;background:#17191e;color:#fff;border-radius:5px;padding:7px 9px;font:11px Verdana,Geneva,sans-serif;cursor:pointer}
-.history-years button.selected{background:#670010;border-color:#fff}
-.sidebar:before{content:"";position:absolute;z-index:1;left:16px;top:244px;width:calc(100% - 32px);height:266px;border:0;background:#08090c;border-radius:14px;box-shadow:0 12px 24px rgba(0,0,0,.2);pointer-events:none}
+.history-years{display:grid;gap:0;margin:0 -8px;padding:4px 8px 14px;background:#08090c;border-radius:0 0 14px 14px}
+.history-years button{width:100%;border:0;border-top:1px solid #282a2e;border-left:3px solid transparent;background:#08090c;color:#e8eaed;border-radius:0;padding:10px 12px;font:11px Verdana,Geneva,sans-serif;text-align:left;cursor:pointer}
+.history-years button:hover{background:#17191e}
+.history-years button.selected{border-left-color:#79ccef;background:#182432;color:#fff;font-weight:700}
+.sidebar:before{content:"";position:absolute;z-index:1;left:16px;top:244px;width:calc(100% - 32px);height:390px;border:0;background:#08090c;border-radius:14px;box-shadow:0 12px 24px rgba(0,0,0,.2);pointer-events:none}
 .actions{display:none!important}
 .workspace{max-width:none;min-height:100vh;padding-bottom:30px}
 .grid{display:block}
